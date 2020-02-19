@@ -1,0 +1,146 @@
+#!/usr/bin/env python3
+
+# converting netcdf from hysplit to json files for the hysplit viewer
+# app
+
+import hysplit_common
+import re, os, glob, sys, datetime, shutil
+from sqlalchemy import create_engine
+from multiprocessing import Pool
+pg = create_engine('postgresql:///hysplit_xcite')
+
+quantize = 10000 # topojson setting
+input_folder = sys.argv[1]
+glob_str = sys.argv[1]
+print(glob_str)
+
+if len(sys.argv) < 3:
+    # just convert the data under the hysplit directory now
+    website_folder = '/home/xcite/hysplit/conversion_data/'
+else:
+    website_folder = sys.argv[2]
+
+if website_folder[len(website_folder) - 1] != '/':
+    website_folder += '/'
+
+sites = glob.glob(glob_str)
+# # just use the 2 sites for testing now
+# pattern = re.compile(".*BUFF.*|.*VOOR.*")
+# sites = [ site for site in sites if pattern.match(site) ]
+# print(sites)
+# sites = ['/data/hysplit/out/20170825/20170825_12z_VOOR']
+base = re.sub('/[^/]*$', '', sites[0]) + '/'
+print(base)
+
+
+date_str = re.sub('.*/', '', base[0:len(base) - 1])
+hour_str = re.sub('.*\*', '', glob_str[0:len(glob_str) - 1])
+start_time = datetime.datetime.strptime(date_str + hour_str, '%Y%m%d%Hz')
+print(start_time)
+
+def update_sites():
+    # yes this is a real command that makes sense
+    query = "insert into sites(stid, number, name, latitude, longitude, elevation, county, nearest_city, state, distance_from_town, direction_from_town, climate_division, climate_division_name, wfo, commissioned, decommissioned) select * from nysm_csv on conflict (stid) do update set (stid, number, name, latitude, longitude, elevation, county, nearest_city, state, distance_from_town, direction_from_town, climate_division, climate_division_name, wfo, commissioned, decommissioned) = (select * from nysm_csv where nysm_csv.stid=excluded.stid)"
+    with pg.connect() as con:
+        con.execute(query)
+
+def time_in_db(time):
+    query = ("select exists(select id from available_times where time='" +
+             str(time) + "')")
+    with pg.connect() as con:
+        rs = con.execute(query)
+    return list(rs)[0][0]
+
+def add_time_to_db(time):
+    query = ("insert into available_times (time) values ('" +
+             str(time) + "')")
+    with pg.connect() as con:
+        con.execute(query)
+
+def get_site_id(pg, site):
+    query = "select id from sites where stid='" + site + "'"
+    with pg.connect() as con:
+        rs = con.execute(query)
+    return list(rs)[0][0]
+
+def get_time_id(time):
+    query = "select id from available_times where time='" + str(time) + "'"
+    with pg.connect() as con:
+        rs = con.execute(query)
+    return list(rs)[0][0]
+
+def activate_time(time_id):
+    query = "update available_times set active='true' where id=" + str(time_id)
+    with pg.connect() as con:
+        con.execute(query)
+
+def simulation_in_db(pg, site_id, time_id, fwd):
+    query = ("select exists(select id from simulations where site_id=" +
+             str(site_id) + " and time_id=" + str(time_id) +
+             " and forward=" + str(fwd) + ")")
+    with pg.connect() as con:
+        rs = con.execute(query)
+    return list(rs)[0][0]
+
+def add_simulation_to_db(pg, site_id, time_id, fwd):
+    query = ("insert into simulations (site_id, time_id, forward) values (" +
+             str(site_id) + ", " + str(time_id) + ", '" + str(fwd) + "')")
+    with pg.connect() as con:
+        con.execute(query)
+
+def get_simulation_id(pg, site_id, time_id, fwd):
+    if not simulation_in_db(pg, site_id, time_id, fwd):
+        add_simulation_to_db(pg, site_id, time_id, fwd)
+    query = ("select id from simulations where site_id=" +
+             str(site_id) + " and time_id=" + str(time_id) +
+             " and forward=" + str(fwd))
+    with pg.connect() as con:
+        rs = con.execute(query)
+    return list(rs)[0][0]
+
+def remove_old_times(pg):
+    query = "delete from available_times where age(current_timestamp at time zone 'UTC', time) >= interval '30 days'"
+    with pg.connect() as con:
+        con.execute(query)
+
+# first update the mesonet sites
+update_sites()
+        
+# see if the time is in the database
+if not time_in_db(start_time):
+    add_time_to_db(start_time)
+
+# main loop
+nsites = len(sites)
+time_id = get_time_id(start_time)
+
+def process_site(site):
+    print('Site: ' + site)
+    pg2 = create_engine('postgresql:///hysplit_xcite')
+    site_folder = re.sub('.*/', '', site) + '/'
+    site_name = re.sub('.*_|/', '', site_folder)
+    site_id = get_site_id(pg2, site_name)
+    data_dir = base + site_folder
+    site_folder0 = website_folder + site_folder
+    if not os.path.exists(site_folder0):
+        os.makedirs(site_folder0)
+    for fwd in [True, False]:
+        sim_id = get_simulation_id(pg2, site_id, time_id, fwd)
+        # write the data files
+        hysplit_common.write_json_files(pg2, site_name, fwd, site_folder0,
+                                        quantize, data_dir, sim_id=sim_id)
+    # now delete the files since we don't need them anymore
+    shutil.rmtree(site_folder0)
+
+with Pool(4) as p:
+    print('Starting processing...')
+    p.map(process_site, sites)
+
+# activate the time
+activate_time(time_id)
+
+# remove old times
+remove_old_times(pg)
+
+# tell jeongran it's finished
+print('Processing finished.')

@@ -1,0 +1,149 @@
+---
+title: "Maps, how do they work?"
+subtitle: 'Source: https://github.com/ASRCsoft/map_backends'
+author: "William May"
+date: "`r gsub(' 0', ' ', format(Sys.Date(), '%B %d, %Y'))`"
+output: ioslides_presentation
+---
+
+```{r setup, include=FALSE}
+library(magrittr)
+library(DiagrammeR)
+library(leaflet)
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+<style>
+/* 2-column formatting */w
+.columns-2 {
+  height: 76%;
+  -webkit-column-gap: 10%;
+  -moz-column-gap: 10%;
+  column-gap: 10%;
+}
+.forceBreak {
+  -webkit-column-break-after: always;
+  break-after: column;
+}
+/* Definition lists */
+dt {
+    font-weight: bold;
+    margin-top: 30px;
+    margin-bottom: 10px;
+}
+dt::after {
+  content: ":";
+}
+dd {
+    margin-left: 20px;
+}
+</style>
+
+## Outline
+
+```{r}
+node_labels = c('HYSPLIT/IDEA/etc', 'Python/GDAL\n(parse raw data)', 'Postgres (database)', 'Flask (server)',
+								'Leaflet (map)')
+n_nodes = length(node_labels)
+nodes = create_node_df(n_nodes, label = node_labels)
+edges = create_edge_df(1:4, 2:5)
+create_graph(nodes, edges, attr_theme = NULL) %>%
+	render_graph
+```
+
+## Flask
+
+- listens for API calls
+- gets data from postgres
+- sends back json and png files
+
+## Leaflet {.columns-2}
+
+- flexible and easily extensible
+- [Leaflet.TimeDimension](https://github.com/socib/Leaflet.TimeDimension) plugin provides time controls (but sometimes it's a pain)
+- can also be used via R and Python libraries
+
+<p class="forceBreak"></p>
+
+```{r out.width="100%"}
+asrc_lat = 42.692134
+asrc_lng = -73.832040
+leaflet() %>%
+	setView(asrc_lng, asrc_lat, zoom = 16) %>%
+  addTiles() %>%
+  addMarkers(lng = asrc_lng, lat = asrc_lat, popup = 'ASRC')
+```
+
+## Use Shiny instead {.columns-2}
+
+- runs its own server (no flask required)
+- easy to make user interfaces
+- easy to include interactive plots (like leaflet)
+- can set up time series animations
+
+<p class="forceBreak"></p>
+
+```{r out.width="100%"}
+node_labels = c('HYSPLIT/IDEA/etc', 'Python/GDAL\n(parse raw data)', 'Postgres (database)', 'R/Shiny')
+n_nodes = length(node_labels)
+nodes = create_node_df(n_nodes, label = node_labels)
+edges = create_edge_df(1:3, 2:4)
+create_graph(nodes, edges, attr_theme = NULL) %>%
+	render_graph
+```
+
+## Python + GDAL
+
+- GDAL (Geospatial Data Abstraction Library) needed to convert satellite swaths to standard map projections
+- cron runs Python scripts that convert data and insert it into postgres
+
+## Postgres + PostGIS
+
+### PostgreSQL (aka Postgres)
+
+- old open source database with a lot of nice features
+
+### PostGIS
+
+- adds geospatial types (points, rasters, polygons, etc) to postgres
+- can convert data to png, geotiff, and geojson
+
+## human issues
+
+Sarah Lu group/DEC does not know what they want, just ask for "demos" and new features over and over again. Try to get a list of
+
+- what data they're interested in
+- what attributes they want to see (location, height, concentration, ...)
+- which datasets they want to directly compare
+
+and be ready to make changes.
+
+Save yourself some headaches by splitting features into multiple apps or pages instead of one ultra-complicated app.
+
+## Inventory
+
+HYSPLIT
+  ~ Trajectory and dispersion model, uses HRRR model output (Mark Beauharnois maintains part of the code)
+
+IDEA
+  ~ Trajectory model, uses VIIRS satellite swaths and HRRR
+  
+CMAQ
+  ~ Air quality model (no database or server yet)
+  
+Lidar
+  ~ Leosphere Wind Lidar, instrument that measures wind speeds and aerosols
+
+## useful links
+
+- [etl](https://github.com/beanumber/etl) R package, convenient way to organize databases in R
+- [leaflet](https://github.com/rstudio/leaflet) R package
+- [leaflet.extras](https://github.com/bhaskarvk/leaflet.extras) R package
+- [Leaflet.LayerArray](https://github.com/ASRCsoft/Leaflet.LayerArray): ASRC extension of Leaflet.TimeDimension
+- [MobilityDB](https://github.com/ULB-CoDE-WIT/MobilityDB): a Postgres extension with trajectory functions
+- [rpostgis](https://github.com/mablab/rpostgis) R package
+- [Shiny](https://github.com/rstudio/shiny)
+- [Spatial](https://cran.r-project.org/view=Spatial) R task view
+- [Spatiotemporal](https://cran.r-project.org/view=SpatioTemporal) R task view
+- [splitR](https://github.com/rich-iannone/splitr): R HYSPLIT package
+- [Tracking](https://cran.r-project.org/view=Tracking) R task view
